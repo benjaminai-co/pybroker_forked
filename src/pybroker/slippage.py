@@ -88,7 +88,7 @@ class VolatilityVolumeSlippageModel(SlippageModel):
         vol_window: int = 20,
         vol_factor: float = 0.1,
         cash_thresholds: list[float] = [500_000.0, 1_000_000.0],
-        size_factors: list[float] = [0.01, 0.03, 0.05],
+        size_factors: list[float] = [0.01, 0.1, 0.2],
     ):
 
         if len(size_factors) != len(cash_thresholds) + 1:
