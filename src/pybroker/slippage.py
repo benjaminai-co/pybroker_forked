@@ -64,7 +64,8 @@ class RandomSlippageModel(SlippageModel):
 class VolatilityVolumeSlippageModel(SlippageModel):
     """
     Applies slippage based on market volatility (ATR) and order size relative
-    to average volume. Falls back to volatility-only if volume data is unavailable.
+    to average volume. Size factor is dynamically adjusted based on portfolio cash.
+    Falls back to volatility-only if volume data is unavailable.
 
     Args:
         data (pd.DataFrame): DataFrame containing historical OHLCV data,
@@ -73,7 +74,11 @@ class VolatilityVolumeSlippageModel(SlippageModel):
         atr_window (int): Window period for ATR calculation. Defaults to 14.
         vol_window (int): Window period for rolling average volume calculation. Defaults to 20.
         vol_factor (float): Scaling factor for the volatility component of slippage. Defaults to 0.1.
-        size_factor (float): Scaling factor for the order size component of slippage. Defaults to 0.01.
+        cash_thresholds (List[float]): List of cash thresholds for adjusting size_factor.
+                                       Defaults to [500_000, 1_000_000].
+        size_factors (List[float]): List of size factors corresponding to cash thresholds.
+                                    Must be one longer than cash_thresholds.
+                                    Defaults to [0.01, 0.03, 0.05].
     """
 
     def __init__(
@@ -82,13 +87,20 @@ class VolatilityVolumeSlippageModel(SlippageModel):
         atr_window: int = 14,
         vol_window: int = 20,
         vol_factor: float = 0.1,
-        size_factor: float = 0.01,
+        cash_thresholds: list[float] = [500_000.0, 1_000_000.0],
+        size_factors: list[float] = [0.01, 0.03, 0.05],
     ):
+
+        if len(size_factors) != len(cash_thresholds) + 1:
+            raise ValueError(
+                "Length of size_factors must be one more than cash_thresholds."
+            )
 
         self.atr_window = atr_window
         self.vol_window = vol_window
         self.vol_factor = Decimal(str(vol_factor))
-        self.size_factor = Decimal(str(size_factor))
+        self.cash_thresholds_dec = [Decimal(str(t)) for t in sorted(cash_thresholds)]
+        self.size_factors_dec = [Decimal(str(f)) for f in size_factors]
         self.metrics = {}
 
         if "date" in data.columns:
@@ -120,8 +132,9 @@ class VolatilityVolumeSlippageModel(SlippageModel):
 
             if has_volume and not group_df["volume"].isnull().all():
                 vol_filled = group_df["volume"].ffill()
+                # Use rolling mean for volume, not EWM, consistent with original logic intent?
                 symbol_metrics["avg_volume"] = (
-                    vol_filled.ewm(window=self.vol_window, min_periods=1)
+                    vol_filled.rolling(window=self.vol_window, min_periods=1)
                     .mean()
                     .fillna(0)
                 )
@@ -152,10 +165,11 @@ class VolatilityVolumeSlippageModel(SlippageModel):
             current_date = (
                 current_date.tz_localize(None) if current_date.tzinfo else current_date
             )
+            current_cash = ctx.cash
 
         except AttributeError:
             print(
-                f"Slippage Warning: ctx.dt not found for {symbol}. Cannot apply slippage."
+                f"Slippage Warning: ctx.dt or ctx.cash not found for {symbol}. Cannot apply slippage."
             )
             if buy_shares:
                 ctx.buy_shares = buy_shares
@@ -217,13 +231,19 @@ class VolatilityVolumeSlippageModel(SlippageModel):
                 relative_volatility = current_atr / current_price
                 slippage_pct += relative_volatility * self.vol_factor
 
+            dynamic_size_factor = self.size_factors_dec[-1]
+            for i, threshold in enumerate(self.cash_thresholds_dec):
+                if current_cash < threshold:
+                    dynamic_size_factor = self.size_factors_dec[i]
+                    break
+
             if current_avg_volume > 0:
                 order_shares = buy_shares if buy_shares else sell_shares
                 if order_shares:
                     if not isinstance(order_shares, Decimal):
                         order_shares = Decimal(str(order_shares))
                     size_impact = order_shares / current_avg_volume
-                    slippage_pct += size_impact * self.size_factor
+                    slippage_pct += size_impact * dynamic_size_factor
 
             slippage_pct = max(Decimal("0"), slippage_pct)
 
