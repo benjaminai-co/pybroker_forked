@@ -132,9 +132,8 @@ class VolatilityVolumeSlippageModel(SlippageModel):
 
             if has_volume and not group_df["volume"].isnull().all():
                 vol_filled = group_df["volume"].ffill()
-                # Use rolling mean for volume, not EWM, consistent with original logic intent?
                 symbol_metrics["avg_volume"] = (
-                    vol_filled.rolling(window=self.vol_window, min_periods=1)
+                    vol_filled.ewm(window=self.vol_window, min_periods=1)
                     .mean()
                     .fillna(0)
                 )
