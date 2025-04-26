@@ -44,7 +44,7 @@ from pybroker.scope import (
     register_columns,
     unregister_columns,
 )
-from pybroker.slippage import RandomSlippageModel
+from pybroker.slippage import RandomSlippageModel, VolatilityVolumeSlippageModel
 from pybroker.strategy import Strategy, TestResult
 from pybroker.vect import cross, highv, lowv, returnv, sumv
 
